@@ -39,3 +39,17 @@
 .dlm-vfill { display: block; height: 100%; background: #337ab7; }
 .dlm-vcount { text-align: right; font-variant-numeric: tabular-nums; }
 .dlm-vrest, .dlm-vclear { grid-column: 1 / -1; margin-top: 0.4em; justify-self: start; }
+
+/* device types, selection, bulk actions */
+.dlm-menu { overflow-y: auto; }
+.dlm-type { white-space: nowrap; }
+.dlm-type.dlm-manual { font-weight: 600; }
+.dlm-type.dlm-manual::after { content: " \2022"; color: #337ab7; }
+.dlm-table tr.dlm-selected > td { background-color: rgba(51, 122, 183, 0.15) !important; }
+.dlm-bulk { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5em 1em; margin-bottom: 0.75em; }
+.dlm-bulk .dlm-actions { display: inline-flex; flex-wrap: wrap; gap: 0.4em; align-items: center; }
+.dlm-bulk select.form-control { width: auto; display: inline-block; }
+.dlm-bulk .dlm-note { font-size: 0.9em; }
+.dlm-chart-tabs a { color: inherit; opacity: 0.55; text-decoration: none; }
+.dlm-chart-tabs a.active { opacity: 1; font-weight: 600; }
+.dlm-vname .fa-fw { opacity: 0.8; }

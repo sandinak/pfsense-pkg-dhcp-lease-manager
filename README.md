@@ -6,7 +6,9 @@ A pfSense package that gives you a better view of DHCP leases than the stock
 - **Sort by lease age**: how long ago each lease started. It also sorts by expiry, IP (numerically), hostname, and the other columns.
 - **Sort and filter by manufacturer**: looks up each MAC's OUI. Private (randomized) MACs from phones and laptops get their own label instead of "Unknown".
 - **Right-click a lease** to turn it into a static mapping. The core *Static Mapping* editor opens with MAC, client ID, hostname and description filled in.
-- **Manufacturer breakdown chart**. Click a bar to filter by that manufacturer.
+- **Device types** (TV, Apple TV/streaming, light switch, smart plug, camera, doorbell, thermostat, phone, computer, Raspberry Pi, access point and more). Types are guessed from the hostname first, then the manufacturer. The ordered rules are `DLM_TYPE_RULES` in the `.inc` file. Right-click > *Set device type* to override a guess; overrides are stored per MAC address in `config.xml`.
+- **Select and clear static mappings**: tick rows (shift-click selects a range) and use *Clear static mappings*, or right-click > *Remove static mapping*. It behaves like pfSense's own delete: it clears the static ARP entry and drops the Kea lease, and you finish with pfSense's **Apply Changes** button. Each deletion is checked against the MAC address so a stale page can't remove the wrong entry. You can also set or reset the type for a whole selection.
+- **Breakdown chart** by device type or manufacturer. Click a bar to filter.
 - Filters by interface, state and online status. Free-text search. Optional auto-refresh.
 
 ## DHCP server support

@@ -33,4 +33,42 @@ check(dlm_vendor_for_mac('3a:11:22:33:44:55', $oui)[1] === 'private', 'Vendor: l
 check(dlm_vendor_for_mac('00:11:22:33:44:55', $oui)[1] === 'unknown', 'Vendor: miss => unknown');
 check(dlm_normalize_mac('00-1B-63-AA-BB-CC') === '00:1b:63:aa:bb:cc', 'MAC normalization');
 
+$cases = array(
+	array('ender-lights', 'Winstars Technology', '3d-printer'),
+	array('greatromappletv', 'Apple', 'streaming'),
+	array('kitchen', 'Apple', 'streaming'),
+	array('vikkitv', 'Hisense Visual Technology', 'tv'),
+	array('viziocastaudio9730', 'Vizio', 'audio'),
+	array('evoaudiombp', 'Apple', 'computer'),
+	array('merossdimmerswitch', 'Chengdu Meross Technology', 'light-switch'),
+	array('merosswallswitch', 'Chengdu Meross Technology', 'light-switch'),
+	array('sw-workshop-inside', 'Chengdu Meross Technology', 'light-switch'),
+	array('sw-livingroom', 'TP-Link Technologies', 'network'),
+	array('meross-mss620-d960', 'Chengdu Meross Technology', 'smart-plug'),
+	array('merosssmartbulb', 'Chengdu Meross Technology', 'light'),
+	array('cam-front-walkway', 'Amcrest Technologies', 'camera'),
+	array('doorbell-front', 'FN-Link Technology Limited', 'doorbell'),
+	array('cam-doorbell-garage', 'FN-Link Technology Limited', 'doorbell'),
+	array('ap-garage', 'Netgear', 'access-point'),
+	array('brmathes-mr44-e455a8067a76', 'Cisco Meraki', 'access-point'),
+	array('brmathes-mx68cw-0c7bc8c3018f', 'Cisco Meraki', 'network'),
+	array('iphone', 'Private (randomized MAC)', 'phone'),
+	array('jordan-s-s25', 'Private (randomized MAC)', 'phone'),
+	array('watch', 'Private (randomized MAC)', 'watch'),
+	array('pve', 'Hon Hai Precision Industry', 'server'),
+	array('pond-pi', 'Raspberry Pi Foundation', 'sbc'),
+	array('workshop', 'ecobee', 'thermostat'),
+	array('envoy', 'Texas Instruments', 'energy'),
+	array('WeatherStation', 'Espressif', 'iot'),
+	array('printer', 'Brother Industries', 'printer'),
+	array('', 'Qingdao Intelligent&Precise Electr', 'unknown'),
+);
+foreach ($cases as $c) {
+	list($t) = dlm_classify(array('hostname' => $c[0], 'vendor' => $c[1]));
+	check($t === $c[2], "Type: '{$c[0]}' ({$c[1]}) => {$c[2]}" . ($t === $c[2] ? '' : " (got {$t})"));
+}
+foreach (DLM_TYPE_RULES as $r) {
+	check(isset(DLM_TYPES[$r[0]]), "Rule type '{$r[0]}' is defined");
+}
+
 exit($fail ? 1 : 0);

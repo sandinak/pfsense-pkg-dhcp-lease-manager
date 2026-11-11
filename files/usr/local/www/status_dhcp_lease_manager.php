@@ -26,7 +26,38 @@
 ##|-PRIV
 
 require_once("guiconfig.inc");
+require_once("services_dhcp.inc");
 require_once("/usr/local/pkg/dhcp_lease_manager.inc");
+
+function dlm_json_reply($payload, $code = 200) {
+	http_response_code($code);
+	header('Content-Type: application/json');
+	header('Cache-Control: no-store');
+	echo json_encode($payload);
+	exit;
+}
+
+/* AJAX actions. POSTs are CSRF-checked by guiconfig.inc (csrf-magic). */
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['dlm_action'])) {
+	switch ($_POST['dlm_action']) {
+		case 'settype':
+			$macs = json_decode($_POST['macs'] ?? '[]', true);
+			$err = dlm_set_type_override(is_array($macs) ? $macs : array(), (string)($_POST['type'] ?? ''));
+			dlm_json_reply($err ? array('ok' => false, 'error' => $err) : array('ok' => true), $err ? 400 : 200);
+		case 'delstatic':
+			$items = json_decode($_POST['items'] ?? '[]', true);
+			list($n, $errors) = dlm_delete_static_maps(is_array($items) ? $items : array());
+			dlm_json_reply(array('ok' => $n > 0, 'removed' => $n, 'errors' => $errors), $n > 0 ? 200 : 400);
+		default:
+			dlm_json_reply(array('ok' => false, 'error' => 'Unknown action'), 400);
+	}
+}
+
+/* pfSense "Apply Changes" banner posts here, same as services_dhcp.php. */
+if (isset($_POST['apply'])) {
+	$changes_applied = true;
+	$retval = dhcp_apply_changes();
+}
 
 $data = dlm_get_leases();
 
@@ -43,13 +74,24 @@ $shortcut_section = "dhcp";
 include("head.inc");
 
 $backend_label = array('kea' => 'Kea DHCP', 'isc' => 'ISC DHCP', 'unknown' => gettext('unknown backend'));
+
+if ($changes_applied) {
+	print_apply_result_box($retval);
+}
+if (is_subsystem_dirty('dhcpd')) {
+	print_apply_box(gettext('The DHCP Server configuration has changed.') . '<br />' .
+		gettext('The changes must be applied for them to take effect.'));
+}
 ?>
 <link rel="stylesheet" href="/dhcp_lease_manager/lease_manager.css" />
 
 <div class="panel panel-default">
 	<div class="panel-heading">
 		<h2 class="panel-title">
-			<?=gettext("Manufacturers")?>
+			<span class="dlm-chart-tabs">
+				<a href="#" data-chart="type" class="active"><?=gettext("Device types")?></a> |
+				<a href="#" data-chart="vendor"><?=gettext("Manufacturers")?></a>
+			</span>
 			<small class="dlm-meta">
 				<?=htmlspecialchars($backend_label[$data['backend']] ?? $data['backend'])?>
 				&middot; <span id="dlm-count"></span>
@@ -72,6 +114,9 @@ $backend_label = array('kea' => 'Kea DHCP', 'isc' => 'ISC DHCP', 'unknown' => ge
 			<select id="dlm-iface" class="form-control input-sm">
 				<option value=""><?=gettext("All interfaces")?></option>
 			</select>
+			<select id="dlm-type" class="form-control input-sm">
+				<option value=""><?=gettext("All device types")?></option>
+			</select>
 			<select id="dlm-state" class="form-control input-sm">
 				<option value=""><?=gettext("All states")?></option>
 				<option value="active"><?=gettext("Active")?></option>
@@ -87,14 +132,18 @@ $backend_label = array('kea' => 'Kea DHCP', 'isc' => 'ISC DHCP', 'unknown' => ge
 			</select>
 			<span class="text-muted dlm-hint"><?=gettext("Click a column to sort; right-click a row for actions.")?></span>
 		</form>
+		<div id="dlm-bulk" class="alert alert-info dlm-bulk" style="display:none"></div>
+		<div id="dlm-msg"></div>
 	</div>
 	<div class="table-responsive">
 		<table class="table table-striped table-hover table-condensed dlm-table" id="dlm-table">
 			<thead>
 				<tr>
+					<th class="dlm-narrow"><input type="checkbox" id="dlm-all" title="<?=gettext("Select all shown")?>" /></th>
 					<th data-key="online" class="dlm-narrow" title="<?=gettext("Online")?>"></th>
 					<th data-key="ip"><?=gettext("IP address")?></th>
 					<th data-key="mac"><?=gettext("MAC address")?></th>
+					<th data-key="type_label"><?=gettext("Type")?></th>
 					<th data-key="vendor"><?=gettext("Manufacturer")?></th>
 					<th data-key="hostname"><?=gettext("Hostname")?></th>
 					<th data-key="descr"><?=gettext("Description")?></th>

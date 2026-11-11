@@ -167,6 +167,145 @@ function dlm_vendor_for_mac($mac, $table) {
 	return array('Unknown', 'unknown');
 }
 
+/* ------------------------------------------------------- device types */
+
+/* type id => array(label, Font Awesome 6 icon) */
+define('DLM_TYPES', [
+	'tv'           => ['TV', 'fa-tv'],
+	'streaming'    => ['Apple TV / streaming', 'fa-circle-play'],
+	'audio'        => ['Speaker / audio', 'fa-volume-high'],
+	'light-switch' => ['Light switch / dimmer', 'fa-toggle-on'],
+	'smart-plug'   => ['Smart plug', 'fa-plug'],
+	'light'        => ['Light / bulb', 'fa-lightbulb'],
+	'camera'       => ['Camera', 'fa-video'],
+	'doorbell'     => ['Doorbell', 'fa-bell'],
+	'thermostat'   => ['Thermostat', 'fa-temperature-half'],
+	'energy'       => ['Energy monitor', 'fa-bolt'],
+	'iot'          => ['IoT / sensor', 'fa-microchip'],
+	'phone'        => ['Phone', 'fa-mobile-screen-button'],
+	'tablet'       => ['Tablet', 'fa-tablet-screen-button'],
+	'watch'        => ['Watch', 'fa-clock'],
+	'computer'     => ['Computer', 'fa-laptop'],
+	'server'       => ['Server / NAS', 'fa-server'],
+	'sbc'          => ['Raspberry Pi / SBC', 'fa-memory'],
+	'printer'      => ['Printer', 'fa-print'],
+	'3d-printer'   => ['3D printer', 'fa-cube'],
+	'access-point' => ['Access point', 'fa-wifi'],
+	'network'      => ['Network gear', 'fa-network-wired'],
+	'game'         => ['Game console', 'fa-gamepad'],
+	'unknown'      => ['Unknown', 'fa-circle-question'],
+]);
+
+/*
+ * Ordered classification rules; the first rule whose conditions ALL match wins.
+ * Conditions are case-insensitive regexes on 'hostname', 'vendor' or 'descr'.
+ * Hostname rules come before vendor-only rules because a name chosen by the
+ * owner ("kitchen-tv") says more than the radio module's manufacturer.
+ */
+define('DLM_TYPE_RULES', [
+	/* --- hostname-driven (most specific first) --- */
+	['3d-printer',   ['hostname' => '/(^|[^a-z])(ender|prusa|octopi|octoprint|bambu|voron|klipper|mainsail)/']],
+	['printer',      ['hostname' => '/printer|laserjet|officejet|deskjet|^prn[-\d]/']],
+	['doorbell',     ['hostname' => '/doorbell|^ring-/']],
+	['camera',       ['hostname' => '/(^|[^a-z])(cam|camera|ipcam|nvr)([^a-z]|$)|webcam/']],
+	['streaming',    ['hostname' => '/apple-?tv|roku|fire-?tv|firestick|chromecast|nvidia-?shield|google-?tv|onn-?4k/']],
+	['game',         ['hostname' => '/xbox|playstation|ps[45]|nintendo|switch-?oled|steamdeck|steam-?deck/']],
+	['tablet',       ['hostname' => '/ipad|tablet|kindle|galaxy-?tab|fire-?hd/']],
+	['phone',        ['hostname' => '/iphone|android|galaxy|pixel-?\d|(^|-)s2\d(-|$)|phone/']],
+	['watch',        ['hostname' => '/watch/']],
+	['computer',     ['hostname' => '/macbook|mbp|imac|mac-?mini|mac-?studio|^mac\d*$|^mac-|desktop|laptop|notebook|workstation|windows|thinkpad|surface|(^|-)pc(-|$)|comp$/']],
+	['access-point', ['hostname' => '/^ap-|(^|-)ap(\d|-|$)|(^|-)wap|unifi-?ap|(^|-)mr\d+/']],
+	['network',      ['hostname' => '/^(sw|switch)-|router|gateway|firewall|(^|-)(mx|ms)\d+/',
+	                  'vendor' => '/netgear|tp-link|cisco|meraki|ubiquiti|aruba|mikrotik|juniper|d-link|zyxel/']],
+	['network',      ['hostname' => '/router|gateway|firewall|openwrt|(^|-)(mx|ms)\d+/']],
+	['audio',        ['hostname' => '/sonos|homepod|speaker|soundbar|castaudio|studiolive|echo-?dot|alexa|(^|-)audio/']],
+	['tv',           ['hostname' => '/(^|[^a-z])tv([^a-z]|$)|tv$|bravia|television/']],
+	['smart-plug',   ['hostname' => '/plug|outlet|mss(1|6)\d\d|kasa|wemo/']],
+	['light-switch', ['hostname' => '/switch|dimmer|(^|-)sw(-|$)|^sw-|mss5\d\d/']],
+	['light',        ['hostname' => '/bulb|lamp|light|wled|(^|-)hue|lifx|nanoleaf|govee/']],
+	['thermostat',   ['hostname' => '/thermostat|ecobee|(^|-)nest/']],
+	['energy',       ['hostname' => '/envoy|enphase|(^|-)sense-|powerwall|solar|emporia/']],
+	['server',       ['hostname' => '/(^|-)pve|proxmox|esxi|(^|-)nas(-|\d|$)|synology|qnap|truenas|unraid|server|buildhost|docker|k8s|homeassistant/']],
+	['sbc',          ['hostname' => '/(^|-)pi(\d|-|$)|rpi\d?|raspberry/']],
+	['iot',          ['hostname' => '/^esp|esp32|esp8266|tasmota|shelly|sensor|weather|zigbee|zwave|homeiq/']],
+	/* Apple devices named after a room are almost always an Apple TV or HomePod. */
+	['streaming',    ['vendor' => '/^apple/',
+	                  'hostname' => '/kitchen|family|living|bed|room|den$|office|basement|garage|great|loft|patio|theater|theatre/']],
+
+	/* --- manufacturer-only fallbacks --- */
+	['printer',      ['vendor' => '/brother|epson|canon|lexmark|xerox|kyocera/']],
+	['camera',       ['vendor' => '/amcrest|reolink|hikvision|dahua|wyze|axis comm|eufy|altobeam/']],
+	['light',        ['vendor' => '/philips lighting|signify|lifx|nanoleaf|govee/']],
+	['thermostat',   ['vendor' => '/ecobee|nest labs/']],
+	['energy',       ['vendor' => '/enphase/']],
+	['tv',           ['vendor' => '/hisense|vizio|tcl |^tcl|lg electronics|sony visual/']],
+	['streaming',    ['vendor' => '/roku/']],
+	['audio',        ['vendor' => '/sonos|presonus|bose|denon|yamaha/']],
+	['sbc',          ['vendor' => '/raspberry pi/']],
+	['iot',          ['vendor' => '/espressif|tuya|shelly/']],
+	['smart-plug',   ['vendor' => '/meross|belkin/']],
+	['access-point', ['vendor' => '/ubiquiti|meraki/']],
+	['network',      ['vendor' => '/netgear|tp-link|cisco|mikrotik|aruba|juniper|zyxel/']],
+	['server',       ['vendor' => '/synology|qnap|supermicro/']],
+	['computer',     ['vendor' => '/intel corporate|micro-star|asustek|elitegroup|dell|lenovo|hewlett|gigabyte|framework/']],
+	['game',         ['vendor' => '/nintendo|sony interactive|microsoft/']],
+]);
+
+/* Returns array(type, source) where source is rule|unknown. */
+function dlm_classify($lease) {
+	foreach (DLM_TYPE_RULES as $rule) {
+		list($type, $conds) = $rule;
+		$hit = true;
+		foreach ($conds as $field => $re) {
+			$val = strtolower((string)($lease[$field] ?? ''));
+			if ($val === '' || !preg_match($re . 'i', $val)) {
+				$hit = false;
+				break;
+			}
+		}
+		if ($hit) {
+			return array($type, 'rule');
+		}
+	}
+	return array('unknown', 'unknown');
+}
+
+/* Per-MAC manual type overrides, stored in config.xml as base64 JSON. */
+function dlm_type_overrides() {
+	$raw = dlm_config_get('installedpackages/dhcpleasemanager/typemap', '');
+	$map = $raw ? json_decode(base64_decode($raw), true) : null;
+	return is_array($map) ? $map : array();
+}
+
+/* Set ($type) or reset ($type === '') the type of one or more MACs. Returns an error string or null. */
+function dlm_set_type_override($macs, $type) {
+	if ($type !== '' && !array_key_exists($type, DLM_TYPES)) {
+		return 'Invalid device type.';
+	}
+	$map = dlm_type_overrides();
+	$n = 0;
+	foreach ((array)$macs as $mac) {
+		$mac = dlm_normalize_mac($mac);
+		if (!preg_match('/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/', $mac)) {
+			return 'Invalid MAC address.';
+		}
+		if ($type === '') {
+			unset($map[$mac]);
+		} else {
+			$map[$mac] = $type;
+		}
+		$n++;
+	}
+	if ($n === 0) {
+		return 'No devices selected.';
+	}
+	ksort($map);
+	config_set_path('installedpackages/dhcpleasemanager/typemap', base64_encode(json_encode($map)));
+	write_config(sprintf('DHCP Lease Manager: device type %s for %d device(s)',
+		$type === '' ? 'reset' : "set to {$type}", $n));
+	return null;
+}
+
 /* ------------------------------------------------------- static mappings */
 
 /* Map of mac => array(if, ip, hostname, descr) for every configured static mapping. */
@@ -194,6 +333,68 @@ function dlm_static_maps() {
 		}
 	}
 	return $out;
+}
+
+/*
+ * Remove static mappings. $items is a list of array(if, id, mac); each entry
+ * is only removed if the mapping at that index still has that MAC, so a stale
+ * page can never delete the wrong mapping. Mirrors services_dhcp.php "del":
+ * static ARP cleanup, Kea lease removal, and marking DHCP (and DNS host
+ * overrides) dirty so the user applies the change with pfSense's Apply button.
+ * Returns array(removed_count, errors[]).
+ */
+function dlm_delete_static_maps($items) {
+	$removed = array();
+	$errors = array();
+	foreach ((array)$items as $it) {
+		$if = (string)($it['if'] ?? '');
+		$id = $it['id'] ?? null;
+		$mac = dlm_normalize_mac($it['mac'] ?? '');
+		if (!preg_match('/^[a-z0-9_]+$/i', $if) || !is_numeric($id)) {
+			$errors[] = "Invalid request for {$mac}.";
+			continue;
+		}
+		$id = (int)$id;
+		$map = dlm_config_get("dhcpd/{$if}/staticmap/{$id}");
+		if (!is_array($map) || dlm_normalize_mac($map['mac'] ?? '') !== $mac) {
+			$errors[] = "Static mapping for {$mac} changed since the page loaded; reload and try again.";
+			continue;
+		}
+		if (isset($map['arp_table_static_entry']) && is_ipaddrv4($map['ipaddr'] ?? '')) {
+			mwexec('/usr/sbin/arp -d ' . escapeshellarg($map['ipaddr']));
+		}
+		/* Unset leaves the other indices untouched, so the batch order does not matter. */
+		config_del_path("dhcpd/{$if}/staticmap/{$id}");
+		$removed[] = array('if' => $if, 'map' => $map);
+	}
+	if (empty($removed)) {
+		return array(0, $errors);
+	}
+
+	write_config(sprintf('DHCP Lease Manager: removed %d static mapping(s)', count($removed)));
+
+	foreach ($removed as $r) {
+		$if = $r['if'];
+		$map = $r['map'];
+		if (function_exists('config_path_enabled') ? config_path_enabled("dhcpd/{$if}") : true) {
+			mark_subsystem_dirty('dhcpd');
+			if (dlm_config_get('dnsmasq/enable') !== null && dlm_config_get('dnsmasq/regdhcpstatic')) {
+				mark_subsystem_dirty('hosts');
+			}
+		}
+		if (function_exists('dhcp_is_backend') && dhcp_is_backend('kea')) {
+			require_once('system.inc');
+			if (!function_exists('system_del_kea4lease')) {
+				continue;
+			}
+			if (is_ipaddrv4($map['ipaddr'] ?? '')) {
+				system_del_kea4lease($map['ipaddr']);
+			} elseif (!empty($map['mac']) && function_exists('get_keasubnetid_from_interface')) {
+				system_del_kea4lease($map['mac'], get_keasubnetid_from_interface($if));
+			}
+		}
+	}
+	return array(count($removed), $errors);
 }
 
 /* Interface (pfSense name, e.g. "lan", "opt1") whose subnet contains $ip. */
@@ -478,13 +679,24 @@ function dlm_get_leases($opts = array()) {
 		);
 	}
 
+	$overrides = dlm_type_overrides();
 	foreach ($out as &$l) {
 		list($l['vendor'], $l['vendor_kind']) = dlm_vendor_for_mac($l['mac'], $oui);
+		if (isset($overrides[$l['mac']]) && isset(DLM_TYPES[$overrides[$l['mac']]])) {
+			$l['type'] = $overrides[$l['mac']];
+			$l['type_source'] = 'manual';
+		} else {
+			list($l['type'], $l['type_source']) = dlm_classify($l);
+		}
 		$l['age'] = ($l['starts'] !== null) ? max(0, $now - $l['starts']) : null;
 		$l['if_descr'] = ($l['if'] !== '' && function_exists('convert_friendly_interface_to_friendly_descr'))
 			? convert_friendly_interface_to_friendly_descr($l['if']) : strtoupper($l['if']);
 	}
 	unset($l);
 
-	return array('backend' => $backend, 'generated' => $now, 'leases' => $out);
+	$types = array();
+	foreach (DLM_TYPES as $id => $t) {
+		$types[$id] = array('label' => $t[0], 'icon' => $t[1]);
+	}
+	return array('backend' => $backend, 'generated' => $now, 'types' => $types, 'leases' => $out);
 }
