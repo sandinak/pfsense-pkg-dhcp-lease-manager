@@ -33,13 +33,14 @@
  *                                 already handles ISC dhcpd and Kea.
  *   2. Direct parse of the active backend's lease database:
  *        ISC dhcpd : /var/dhcpd/var/db/dhcpd.leases
- *        Kea       : /var/lib/kea/dhcp4.leases (memfile CSV, incl. LFC files)
+ *        Kea       : /var/db/kea/dhcp4.leases (memfile CSV, incl. LFC files)
  *   Any future backend only needs a new dlm_parse_*() function that returns
  *   the same normalized shape.
  */
 
 define('DLM_ISC_LEASES', '/var/dhcpd/var/db/dhcpd.leases');
-define('DLM_KEA_LEASE_DIR', '/var/lib/kea');
+/* pfSense keeps Kea's memfile in /var/db/kea; /var/lib/kea is Kea's upstream default. */
+define('DLM_KEA_LEASE_DIRS', ['/var/db/kea', '/var/lib/kea']);
 define('DLM_OUI_DB_CANDIDATES', [
 	'/usr/local/share/nmap/nmap-mac-prefixes',
 ]);
@@ -86,7 +87,7 @@ function dlm_detect_backend() {
 	if (file_exists(DLM_ISC_LEASES)) {
 		return 'isc';
 	}
-	if (file_exists(DLM_KEA_LEASE_DIR . '/dhcp4.leases')) {
+	if (dlm_kea_lease_dir() !== null) {
 		return 'kea';
 	}
 	return 'unknown';
@@ -179,12 +180,13 @@ function dlm_static_maps() {
 		if (!is_array($ifcfg) || empty($ifcfg['staticmap']) || !is_array($ifcfg['staticmap'])) {
 			continue;
 		}
-		foreach ($ifcfg['staticmap'] as $sm) {
+		foreach ($ifcfg['staticmap'] as $idx => $sm) {
 			if (empty($sm['mac'])) {
 				continue;
 			}
 			$out[dlm_normalize_mac($sm['mac'])] = array(
 				'if' => $if,
+				'index' => $idx,
 				'ip' => $sm['ipaddr'] ?? '',
 				'hostname' => $sm['hostname'] ?? '',
 				'descr' => $sm['descr'] ?? '',
@@ -249,7 +251,8 @@ function dlm_leases_from_core() {
 		$act = strtolower((string)($l['act'] ?? $l['state'] ?? ''));
 		$online = $l['online'] ?? null;
 		if (is_string($online)) {
-			$online = (strtolower($online) === strtolower(gettext('online')) || strtolower($online) === 'online');
+			/* core reports e.g. "active/online" or "idle/offline" */
+			$online = (bool)preg_match('/(^|\W)(online|' . preg_quote(gettext('online'), '/') . ')$/iu', trim($online));
 		}
 		$out[] = array(
 			'ip' => $l['ip'],
@@ -262,6 +265,7 @@ function dlm_leases_from_core() {
 			'ends' => dlm_to_epoch($l['end'] ?? $l['ends'] ?? null),
 			'state' => dlm_canonical_state($act, ($l['type'] ?? '') === 'static'),
 			'online' => $online,
+			'staticmap_index' => $l['staticmap_array_index'] ?? null,
 			'source' => 'core',
 		);
 	}
@@ -324,7 +328,20 @@ function dlm_parse_isc_leases($file = DLM_ISC_LEASES) {
  * Kea's lease file cleanup (LFC) rotates into .completed/.2/.1, so read those
  * oldest-first and let newer rows override.
  */
-function dlm_parse_kea_leases($dir = DLM_KEA_LEASE_DIR) {
+function dlm_kea_lease_dir() {
+	foreach (DLM_KEA_LEASE_DIRS as $d) {
+		if (file_exists("{$d}/dhcp4.leases")) {
+			return $d;
+		}
+	}
+	return null;
+}
+
+function dlm_parse_kea_leases($dir = null) {
+	$dir = $dir ?? dlm_kea_lease_dir();
+	if ($dir === null) {
+		return array();
+	}
 	$files = array();
 	foreach (array('dhcp4.leases.completed', 'dhcp4.leases.2', 'dhcp4.leases.1', 'dhcp4.leases') as $f) {
 		if (is_readable("{$dir}/{$f}")) {
@@ -406,6 +423,8 @@ function dlm_get_leases($opts = array()) {
 
 	foreach ($leases as $l) {
 		$l['mac'] = dlm_normalize_mac($l['mac']);
+		$l['hostname'] = rtrim((string)$l['hostname'], '.');
+		$l['staticmap_index'] = $l['staticmap_index'] ?? null;
 		if ($l['if'] === '') {
 			$l['if'] = dlm_interface_for_ip($l['ip']);
 		}
@@ -424,6 +443,9 @@ function dlm_get_leases($opts = array()) {
 			}
 			if ($l['if'] === '') {
 				$l['if'] = $sm['if'];
+			}
+			if ($l['staticmap_index'] === null && $l['if'] === $sm['if']) {
+				$l['staticmap_index'] = $sm['index'];
 			}
 		}
 		$out[] = $l;
@@ -451,7 +473,8 @@ function dlm_get_leases($opts = array()) {
 			'ip' => $sm['ip'], 'mac' => $mac, 'cid' => '',
 			'hostname' => $sm['hostname'], 'descr' => $sm['descr'], 'if' => $sm['if'],
 			'starts' => null, 'ends' => null, 'state' => 'static',
-			'online' => isset($arp[$sm['ip']]), 'is_static' => true, 'source' => 'config',
+			'online' => isset($arp[$sm['ip']]), 'is_static' => true,
+			'staticmap_index' => $sm['index'], 'source' => 'config',
 		);
 	}
 

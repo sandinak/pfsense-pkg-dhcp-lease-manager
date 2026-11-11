@@ -169,20 +169,25 @@
 	function render() { renderVendors(); renderRows(); }
 
 	/* ------------------------------------------------------ context menu */
-	function staticUrl(l, keepIp) {
+	function staticUrl(l) {
+		/* services_dhcp_edit.php pre-fills these from the query string; the
+		 * IP is left blank because the editor rejects addresses inside the
+		 * dynamic pool and does not read ipaddr from the request anyway. */
 		var p = new URLSearchParams({ if: l.if, mac: l.mac });
 		if (l.cid) { p.set('cid', l.cid); }
 		if (l.hostname) { p.set('hostname', l.hostname); }
 		if (l.descr) { p.set('descr', l.descr); }
-		if (keepIp) { p.set('ipaddr', l.ip); }
 		return '/services_dhcp_edit.php?' + p.toString();
 	}
 
 	function openMenu(ev, l) {
 		var items = [];
 		if (!l.is_static && l.if) {
-			items.push(['fa-plus', 'Add static mapping…', function () { location.href = staticUrl(l, false); }]);
-			items.push(['fa-thumb-tack', 'Add static mapping keeping ' + l.ip, function () { location.href = staticUrl(l, true); }]);
+			items.push(['fa-plus', 'Add static mapping…', function () { location.href = staticUrl(l); }]);
+		} else if (l.is_static && l.if && l.staticmap_index != null) {
+			items.push(['fa-pencil', 'Edit static mapping', function () {
+				location.href = '/services_dhcp_edit.php?if=' + encodeURIComponent(l.if) + '&id=' + encodeURIComponent(l.staticmap_index);
+			}]);
 		} else if (l.is_static && l.if) {
 			items.push(['fa-pencil', 'View static mappings on ' + (l.if_descr || l.if), function () {
 				location.href = '/services_dhcp.php?if=' + encodeURIComponent(l.if);

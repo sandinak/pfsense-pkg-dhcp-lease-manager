@@ -2,7 +2,7 @@
 /*
  * Standalone parser tests (no pfSense needed): php tests/parse_test.php
  */
-function gettext($s) { return $s; }
+if (!function_exists("gettext")) { function gettext($s) { return $s; } }
 require __DIR__ . '/../files/usr/local/pkg/dhcp_lease_manager.inc';
 
 $fail = 0;

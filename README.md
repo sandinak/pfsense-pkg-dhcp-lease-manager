@@ -5,7 +5,7 @@ A pfSense package that gives you a better view of DHCP leases than the stock
 
 - **Sort by lease age**: how long ago each lease started. It also sorts by expiry, IP (numerically), hostname, and the other columns.
 - **Sort and filter by manufacturer**: looks up each MAC's OUI. Private (randomized) MACs from phones and laptops get their own label instead of "Unknown".
-- **Right-click a lease** to turn it into a static mapping. The core *Static Mapping* editor opens with MAC, client ID, hostname and description filled in. You can also keep the current IP.
+- **Right-click a lease** to turn it into a static mapping. The core *Static Mapping* editor opens with MAC, client ID, hostname and description filled in.
 - **Manufacturer breakdown chart**. Click a bar to filter by that manufacturer.
 - Filters by interface, state and online status. Free-text search. Optional auto-refresh.
 
@@ -17,7 +17,7 @@ The package works with any DHCP server pfSense uses:
 |---|---|
 | `system_get_dhcpleases()` (pfSense core) | Available (2.7+). It already abstracts ISC and Kea. |
 | ISC dhcpd lease file `/var/dhcpd/var/db/dhcpd.leases` | Core helper is missing and the backend is ISC |
-| Kea memfile `/var/lib/kea/dhcp4.leases` (+ LFC rotations) | Core helper is missing and the backend is Kea |
+| Kea memfile `/var/db/kea/dhcp4.leases` (+ LFC rotations) | Core helper is missing and the backend is Kea |
 
 All sources are normalized to one lease record in
 `files/usr/local/pkg/dhcp_lease_manager.inc`. To support a future backend, add
