@@ -1,0 +1,14 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+      - name: Lint
+        run: find files -name '*.php' -o -name '*.inc' | xargs -n1 php -l
+      - name: Parser tests
+        run: php tests/parse_test.php

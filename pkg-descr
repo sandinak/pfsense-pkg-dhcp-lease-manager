@@ -1,0 +1,10 @@
+DHCP Lease Manager for pfSense.
+
+An enhanced view of DHCP leases (ISC DHCP and Kea backends) that adds:
+ - sorting by lease age (time since the lease started)
+ - sorting and filtering by hardware manufacturer (MAC OUI lookup,
+   with detection of private/randomized MAC addresses)
+ - a right-click context menu to turn a lease into a static mapping
+ - a manufacturer breakdown chart and live refresh
+
+WWW: https://github.com/sandinak/pfsense-pkg-dhcp-lease-manager

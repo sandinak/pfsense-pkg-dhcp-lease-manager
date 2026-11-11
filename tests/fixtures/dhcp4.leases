@@ -1,0 +1,5 @@
+address,hwaddr,client_id,valid_lifetime,expire,subnet_id,fqdn_fwd,fqdn_rev,hostname,state,user_context,pool_id
+192.168.2.50,b8:27:eb:01:02:03,01:b8:27:eb:01:02:03,7200,1762862400,1,0,0,raspberrypi.,0,,0
+192.168.2.51,de:ad:be:ef:00:01,,7200,1762858800,1,0,0,phone,0,,0
+192.168.2.52,00:11:22:33:44:55,,7200,1762800000,1,0,0,,1,,0
+192.168.2.51,de:ad:be:ef:00:01,,7200,1762866000,1,0,0,phone,0,,0
