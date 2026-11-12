@@ -62,9 +62,19 @@ $cases = array(
 	array('WeatherStation', 'Espressif', 'iot'),
 	array('printer', 'Brother Industries', 'printer'),
 	array('', 'Qingdao Intelligent&Precise Electr', 'unknown'),
+	/* 4th element = MAC, so vendor comes from dlm_vendor_for_mac() */
+	array('buildhost', '', 'vm', 'bc:24:11:12:34:56'),
+	array('homeassistant', '', 'vm', '52:54:00:ab:cd:ef'),
+	array('win11', '', 'vm', '00:15:5d:01:02:03'),
+	array('', '', 'vm', '00:0c:29:aa:bb:cc'),
+	array('web', '', 'container', '02:42:ac:11:00:02'),
+	array('', 'Microsoft', 'unknown'),
 );
+check(dlm_vendor_for_mac('02:42:ac:11:00:02', $oui) === array('Docker (container)', 'virtual'), 'Vendor: Docker prefix is virtual, not private');
+check(dlm_vendor_for_mac('bc:24:11:00:00:01', $oui) === array('Proxmox VE (virtual)', 'virtual'), 'Vendor: Proxmox prefix');
 foreach ($cases as $c) {
-	list($t) = dlm_classify(array('hostname' => $c[0], 'vendor' => $c[1]));
+	list($vendor, $kind) = dlm_vendor_for_mac($c[3] ?? '', $oui);
+	list($t) = dlm_classify(array('hostname' => $c[0], 'vendor' => isset($c[3]) ? $vendor : $c[1], 'vendor_kind' => isset($c[3]) ? $kind : 'oui'));
 	check($t === $c[2], "Type: '{$c[0]}' ({$c[1]}) => {$c[2]}" . ($t === $c[2] ? '' : " (got {$t})"));
 }
 foreach (DLM_TYPE_RULES as $r) {

@@ -151,11 +151,39 @@ function dlm_load_oui_table() {
 	return $table;
 }
 
-/* Returns array(vendor, kind) where kind is oui|private|unknown. */
+/*
+ * MAC prefixes that hypervisors and container runtimes assign to guests.
+ * Checked before the OUI database: the database names the vendor
+ * ("Microsoft", "Xensource") but not that the device is a guest, and
+ * Docker's prefix is locally administered so it would otherwise look like
+ * a phone's randomized MAC.
+ */
+define('DLM_VIRTUAL_PREFIXES', [
+	'BC2411' => 'Proxmox VE (virtual)',
+	'525400' => 'QEMU/KVM (virtual)',
+	'005056' => 'VMware (virtual)',
+	'000C29' => 'VMware (virtual)',
+	'000569' => 'VMware (virtual)',
+	'001C14' => 'VMware (virtual)',
+	'00155D' => 'Hyper-V (virtual)',
+	'0003FF' => 'Hyper-V (virtual)',
+	'00163E' => 'Xen (virtual)',
+	'080027' => 'VirtualBox (virtual)',
+	'0A0027' => 'VirtualBox (virtual)',
+	'001C42' => 'Parallels (virtual)',
+	'0242'   => 'Docker (container)',
+]);
+
+/* Returns array(vendor, kind) where kind is oui|virtual|private|unknown. */
 function dlm_vendor_for_mac($mac, $table) {
 	$hex = strtoupper(str_replace(':', '', $mac));
 	if (strlen($hex) < 6) {
 		return array('Unknown', 'unknown');
+	}
+	foreach (DLM_VIRTUAL_PREFIXES as $prefix => $name) {
+		if (strncmp($hex, $prefix, strlen($prefix)) === 0) {
+			return array($name, 'virtual');
+		}
 	}
 	if (isset($table[substr($hex, 0, 6)])) {
 		return array($table[substr($hex, 0, 6)], 'oui');
@@ -187,6 +215,8 @@ define('DLM_TYPES', [
 	'watch'        => ['Watch', 'fa-clock'],
 	'computer'     => ['Computer', 'fa-laptop'],
 	'server'       => ['Server / NAS', 'fa-server'],
+	'vm'           => ['Virtual machine', 'fa-cubes'],
+	'container'    => ['Container', 'fa-box'],
 	'sbc'          => ['Raspberry Pi / SBC', 'fa-memory'],
 	'printer'      => ['Printer', 'fa-print'],
 	'3d-printer'   => ['3D printer', 'fa-cube'],
@@ -203,6 +233,10 @@ define('DLM_TYPES', [
  * owner ("kitchen-tv") says more than the radio module's manufacturer.
  */
 define('DLM_TYPE_RULES', [
+	/* --- hypervisor / container MACs: definitive, so they come first --- */
+	['container',    ['vendor_kind' => '/^virtual$/', 'vendor' => '/\(container\)$/']],
+	['vm',           ['vendor_kind' => '/^virtual$/']],
+
 	/* --- hostname-driven (most specific first) --- */
 	['3d-printer',   ['hostname' => '/(^|[^a-z])(ender|prusa|octopi|octoprint|bambu|voron|klipper|mainsail)/']],
 	['printer',      ['hostname' => '/printer|laserjet|officejet|deskjet|^prn[-\d]/']],
@@ -248,7 +282,8 @@ define('DLM_TYPE_RULES', [
 	['network',      ['vendor' => '/netgear|tp-link|cisco|mikrotik|aruba|juniper|zyxel/']],
 	['server',       ['vendor' => '/synology|qnap|supermicro/']],
 	['computer',     ['vendor' => '/intel corporate|micro-star|asustek|elitegroup|dell|lenovo|hewlett|gigabyte|framework/']],
-	['game',         ['vendor' => '/nintendo|sony interactive|microsoft/']],
+	/* Not "microsoft": that OUI also covers Surface, Hyper-V and USB NICs. */
+	['game',         ['vendor' => '/nintendo|sony interactive/']],
 ]);
 
 /* Returns array(type, source) where source is rule|unknown. */
