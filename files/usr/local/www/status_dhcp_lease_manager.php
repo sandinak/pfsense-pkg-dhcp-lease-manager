@@ -18,13 +18,6 @@
  * limitations under the License.
  */
 
-##|+PRIV
-##|*IDENT=page-status-dhcpleasemanager
-##|*NAME=Status: DHCP Lease Manager
-##|*DESCR=Allow access to the 'Status: DHCP Lease Manager' page.
-##|*MATCH=status_dhcp_lease_manager.php*
-##|-PRIV
-
 require_once("guiconfig.inc");
 require_once("services_dhcp.inc");
 require_once("/usr/local/pkg/dhcp_lease_manager.inc");
@@ -37,8 +30,29 @@ function dlm_json_reply($payload, $code = 200) {
 	exit;
 }
 
+/* Same test write_config() applies: "User - Config: Deny Config Write". */
+function dlm_user_can_write_config() {
+	if (empty($_SESSION['Username']) || ($_SESSION['Username'] == 'admin')) {
+		return true;
+	}
+	$user = getUserEntry($_SESSION['Username']);
+	return !(is_array($user['item'] ?? null) && userHasPrivilege($user['item'], 'user-config-readonly'));
+}
+
+/*
+ * Viewing needs only this page's privilege. Changing device types writes the
+ * configuration; removing static mappings and applying DHCP changes also need
+ * the core privilege for editing DHCP static mappings.
+ */
+$dlm_perms = array('write' => dlm_user_can_write_config());
+$dlm_perms['static'] = $dlm_perms['write'] && isAllowedPage('services_dhcp_edit.php');
+
 /* AJAX actions. POSTs are CSRF-checked by guiconfig.inc (csrf-magic). */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['dlm_action'])) {
+	$need = ($_POST['dlm_action'] === 'delstatic') ? 'static' : 'write';
+	if (!$dlm_perms[$need]) {
+		dlm_json_reply(array('ok' => false, 'error' => gettext('Permission denied.')), 403);
+	}
 	switch ($_POST['dlm_action']) {
 		case 'settype':
 			$macs = json_decode($_POST['macs'] ?? '[]', true);
@@ -49,36 +63,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['dlm_action'])) {
 			list($n, $errors) = dlm_delete_static_maps(is_array($items) ? $items : array());
 			dlm_json_reply(array('ok' => $n > 0, 'removed' => $n, 'errors' => $errors), $n > 0 ? 200 : 400);
 		default:
-			dlm_json_reply(array('ok' => false, 'error' => 'Unknown action'), 400);
+			dlm_json_reply(array('ok' => false, 'error' => gettext('Unknown action.')), 400);
 	}
 }
 
 /* pfSense "Apply Changes" banner posts here, same as services_dhcp.php. */
-if (isset($_POST['apply'])) {
+$changes_applied = false;
+if (isset($_POST['apply']) && $dlm_perms['static']) {
 	$changes_applied = true;
 	$retval = dhcp_apply_changes();
 }
 
 $data = dlm_get_leases();
+$data['perms'] = $dlm_perms;
 
 /* JSON endpoint used by the page's auto-refresh. */
 if (($_GET['format'] ?? '') === 'json') {
-	header('Content-Type: application/json');
-	header('Cache-Control: no-store');
-	echo json_encode($data);
-	exit;
+	dlm_json_reply($data);
 }
 
 $pgtitle = array(gettext("Status"), gettext("DHCP Lease Manager"));
 $shortcut_section = "dhcp";
 include("head.inc");
 
-$backend_label = array('kea' => 'Kea DHCP', 'isc' => 'ISC DHCP', 'unknown' => gettext('unknown backend'));
+$backend_label = array('kea' => 'Kea DHCP', 'isc' => 'ISC DHCP');
 
 if ($changes_applied) {
 	print_apply_result_box($retval);
 }
-if (is_subsystem_dirty('dhcpd')) {
+if (is_subsystem_dirty('dhcpd') && $dlm_perms['static']) {
 	print_apply_box(gettext('The DHCP Server configuration has changed.') . '<br />' .
 		gettext('The changes must be applied for them to take effect.'));
 }

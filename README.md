@@ -11,51 +11,56 @@ A pfSense package that gives you a better view of DHCP leases than the stock
 - **Breakdown chart** by device type or manufacturer. Click a bar to filter.
 - Filters by interface, state and online status. Free-text search. Optional auto-refresh.
 
-## DHCP server support
+## Requirements
 
-The package works with any DHCP server pfSense uses:
+pfSense 2.7 or later (tested on 2.9.0 with Kea). The package reads leases with
+pfSense's own `system_get_dhcpleases()`, which covers both the ISC DHCP and Kea
+backends, so it follows whichever DHCP server is configured.
 
-| Source | Used when |
+## Permissions
+
+| Action | Needs |
 |---|---|
-| `system_get_dhcpleases()` (pfSense core) | Available (2.7+). It already abstracts ISC and Kea. |
-| ISC dhcpd lease file `/var/dhcpd/var/db/dhcpd.leases` | Core helper is missing and the backend is ISC |
-| Kea memfile `/var/db/kea/dhcp4.leases` (+ LFC rotations) | Core helper is missing and the backend is Kea |
+| View the page | *WebCfg - Status: DHCP Lease Manager* |
+| Set or reset device types | ...and no *User - Config: Deny Config Write* |
+| Add/edit/remove static mappings, Apply Changes | ...and *WebCfg - Services: DHCP Server: Edit static mapping* |
 
-All sources are normalized to one lease record in
-`files/usr/local/pkg/dhcp_lease_manager.inc`. To support a future backend, add
-one `dlm_parse_*()` function that returns the same shape.
-
-The package never writes the DHCP configuration itself. Static mappings are
-created through pfSense's own editor (`services_dhcp_edit.php`), so validation
-and the service reload stay with core.
+Adding and editing static mappings opens pfSense's own editor
+(`services_dhcp_edit.php`), so its validation applies. Removal mirrors the
+core delete action.
 
 ## Layout
 
-This repo is laid out as a FreeBSD port, the same as the packages in
+The repository root is the port directory, laid out like the packages in
 [pfsense/FreeBSD-ports](https://github.com/pfsense/FreeBSD-ports)
-(`net-mgmt/pfSense-pkg-dhcp-lease-manager`).
+(`net-mgmt/pfSense-pkg-dhcp-lease-manager`). Only `Makefile`, `pkg-descr`,
+`pkg-plist` and `files/` go upstream. `tests/` and `scripts/` are development
+aids.
 
 ```
 Makefile, pkg-descr, pkg-plist           port metadata
 files/pkg-{install,deinstall}.in         rc.packages hooks
-files/usr/local/pkg/*.xml|*.inc          package definition + lease logic
+files/usr/local/pkg/*.xml|*.inc          package definition + logic
 files/usr/local/www/                     status page, JS, CSS
 files/etc/inc/priv/                      privilege definition
 files/usr/local/share/<port>/info.xml    package registry info
-tests/                                   standalone parser tests + fixtures
+tests/                                   unit tests for the pure functions
+scripts/                                 deploy / package build helpers
 ```
 
 ## Development
 
 ```sh
-php tests/parse_test.php                 # parser tests (PHP 8.x, no pfSense needed)
-scripts/deploy-dev.sh root@pfsense.lan   # copy files onto a test firewall
+php tests/run_tests.php                         # unit tests (PHP 8.x, no pfSense needed)
+scripts/deploy-dev.sh root@fw [--files|--remove]  # copy files onto a test firewall
+scripts/build-pkg.sh  root@fw [--install]         # build a real .pkg on the firewall
 ```
 
-`deploy-dev.sh` copies the files only. Open
-`https://<firewall>/status_dhcp_lease_manager.php` directly. The Status menu
-entry appears only when the package is installed as a real package, built
-with the pfSense ports tree on FreeBSD.
+`build-pkg.sh` stages the files the same way the Makefile's `do-install`
+does, checks that `pkg-plist` matches exactly, and runs `pkg create` on the
+firewall. Use it to test the package without a FreeBSD ports tree. To build
+from the port itself, copy this directory into a pfSense FreeBSD-ports checkout
+and run `make package`.
 
 ## License
 

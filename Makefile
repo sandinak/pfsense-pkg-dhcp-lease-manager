@@ -9,6 +9,7 @@ EXTRACT_ONLY=	# empty
 
 MAINTAINER=	branson@sandsite.org
 COMMENT=	pfSense package to sort, explore and manage DHCP leases
+WWW=		https://github.com/sandinak/pfsense-pkg-dhcp-lease-manager
 
 LICENSE=	APACHE20
 

@@ -30,8 +30,7 @@
 	<menu>
 		<name>DHCP Lease Manager</name>
 		<section>Status</section>
+		<tooltiptext>Sort, filter and manage DHCP leases by age, manufacturer and device type.</tooltiptext>
 		<url>/status_dhcp_lease_manager.php</url>
 	</menu>
-	<custom_php_install_command>dhcp_lease_manager_install();</custom_php_install_command>
-	<custom_php_deinstall_command>dhcp_lease_manager_deinstall();</custom_php_deinstall_command>
 </packagegui>

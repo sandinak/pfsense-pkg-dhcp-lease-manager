@@ -6,4 +6,5 @@ www/dhcp_lease_manager/lease_manager.css
 /etc/inc/priv/dhcp_lease_manager.priv.inc
 %%DATADIR%%/info.xml
 @dir /etc/inc/priv
+@dir /etc/inc
 @dir www/dhcp_lease_manager

@@ -10,5 +10,5 @@ jobs:
           php-version: '8.2'
       - name: Lint
         run: find files -name '*.php' -o -name '*.inc' | xargs -n1 php -l
-      - name: Parser tests
-        run: php tests/parse_test.php
+      - name: Unit tests
+        run: php tests/run_tests.php

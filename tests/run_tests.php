@@ -1,6 +1,7 @@
 <?php
 /*
- * Standalone parser tests (no pfSense needed): php tests/parse_test.php
+ * Standalone tests for the pure functions (no pfSense needed):
+ *   php tests/run_tests.php
  */
 if (!function_exists("gettext")) { function gettext($s) { return $s; } }
 require __DIR__ . '/../files/usr/local/pkg/dhcp_lease_manager.inc';
@@ -11,21 +12,6 @@ function check($cond, $msg) {
 	echo ($cond ? "ok   " : "FAIL ") . $msg . "\n";
 	if (!$cond) { $fail++; }
 }
-
-$isc = dlm_parse_isc_leases(__DIR__ . '/fixtures/dhcpd.leases');
-check(count($isc) === 2, 'ISC: duplicate lease blocks collapse to latest');
-$byip = array_column($isc, null, 'ip');
-check($byip['192.168.1.100']['starts'] === gmmktime(11, 0, 0, 11, 11, 2026), 'ISC: latest starts wins, parsed as UTC');
-check($byip['192.168.1.100']['hostname'] === 'macbook', 'ISC: hostname');
-check($byip['192.168.1.101']['state'] === 'free', 'ISC: binding state');
-
-$kea = dlm_parse_kea_leases(__DIR__ . '/fixtures');
-$byip = array_column($kea, null, 'ip');
-check(count($kea) === 3, 'Kea: later rows override earlier for same address');
-check($byip['192.168.2.50']['starts'] === 1762862400 - 7200, 'Kea: starts = expire - valid_lifetime');
-check($byip['192.168.2.50']['hostname'] === 'raspberrypi', 'Kea: trailing dot stripped from hostname');
-check($byip['192.168.2.51']['ends'] === 1762866000, 'Kea: newest row used');
-check($byip['192.168.2.52']['state'] === 'declined', 'Kea: state 1 => declined');
 
 $oui = array('001B63' => 'Apple');
 check(dlm_vendor_for_mac('00:1b:63:aa:bb:cc', $oui) === array('Apple', 'oui'), 'Vendor: OUI hit');
@@ -80,5 +66,14 @@ foreach ($cases as $c) {
 foreach (DLM_TYPE_RULES as $r) {
 	check(isset(DLM_TYPES[$r[0]]), "Rule type '{$r[0]}' is defined");
 }
+
+check(dlm_canonical_state('active') === 'active', 'State: active');
+check(dlm_canonical_state('expired') === 'expired', 'State: expired');
+check(dlm_canonical_state('', true) === 'static', 'State: static flag wins');
+check(dlm_canonical_state('abandoned') === 'declined', 'State: abandoned => declined');
+check(dlm_is_online('active/online') === true, 'Online: active/online');
+check(dlm_is_online('idle/offline') === false, 'Online: idle/offline');
+check(dlm_to_epoch('2026/11/11 14:24:12') === gmmktime(14, 24, 12, 11, 11, 2026), 'Time: core format is UTC');
+check(dlm_to_epoch('') === null, 'Time: empty => null');
 
 exit($fail ? 1 : 0);

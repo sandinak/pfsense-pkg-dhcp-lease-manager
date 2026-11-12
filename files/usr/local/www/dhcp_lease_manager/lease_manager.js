@@ -73,6 +73,8 @@
 	function now() { return Math.floor(Date.now() / 1000); }
 	function keyOf(l) { return l.mac + '|' + l.ip; }
 	function typeInfo(t) { return state.data.types[t] || state.data.types.unknown; }
+	/* Server enforces these too; the UI just hides what the user cannot do. */
+	function can(what) { return !!(state.data.perms && state.data.perms[what]); }
 
 	function setData(d) {
 		state.data = d;
@@ -257,10 +259,12 @@
 		bar.className = 'alert alert-info dlm-bulk';
 		bar.innerHTML = '<strong>' + sel.length + ' selected</strong>' +
 			'<span class="dlm-actions">' +
-			'<select class="form-control input-sm" data-act="bulk-type"><option value="">Set type…</option>' + typeOptions('') + '</select> ' +
-			'<button type="button" class="btn btn-sm btn-default" data-act="bulk-reset-type"><i class="fa-solid fa-rotate-left"></i> Reset type</button> ' +
-			'<button type="button" class="btn btn-sm btn-danger" data-act="bulk-del"' + (nStatic ? '' : ' disabled') + '>' +
-			'<i class="fa-solid fa-trash-can"></i> Clear static mapping' + (nStatic === 1 ? '' : 's') + ' (' + nStatic + ')</button> ' +
+			(can('write') ?
+				'<select class="form-control input-sm" data-act="bulk-type"><option value="">Set type…</option>' + typeOptions('') + '</select> ' +
+				'<button type="button" class="btn btn-sm btn-default" data-act="bulk-reset-type"><i class="fa-solid fa-rotate-left"></i> Reset type</button> ' : '') +
+			(can('static') ?
+				'<button type="button" class="btn btn-sm btn-danger" data-act="bulk-del"' + (nStatic ? '' : ' disabled') + '>' +
+				'<i class="fa-solid fa-trash-can"></i> Clear static mapping' + (nStatic === 1 ? '' : 's') + ' (' + nStatic + ')</button> ' : '') +
 			'<button type="button" class="btn btn-sm btn-link" data-act="bulk-clear">Clear selection</button>' +
 			'</span>';
 		bar.style.display = 'block';
@@ -317,7 +321,9 @@
 
 	function menuItems(l) {
 		var items = [];
-		if (!l.is_static && l.if) {
+		if (!can('static')) {
+			/* no static mapping actions */
+		} else if (!l.is_static && l.if) {
 			items.push(['fa-plus', 'Add static mapping…', function () { location.href = staticUrl(l); }]);
 		} else if (l.is_static && l.if && l.staticmap_index != null) {
 			items.push(['fa-pencil', 'Edit static mapping', function () {
@@ -330,9 +336,11 @@
 		} else {
 			items.push(['fa-ban', 'Interface unknown – cannot add static mapping', null]);
 		}
-		items.push(null);
-		items.push(['fa-tag', 'Set device type…', function () { openMenu(lastEvent, typeMenuItems(l)); return true; }]);
-		if (l.type_source === 'manual') {
+		if (items.length) { items.push(null); }
+		if (can('write')) {
+			items.push(['fa-tag', 'Set device type…', function () { openMenu(lastEvent, typeMenuItems(l)); return true; }]);
+		}
+		if (can('write') && l.type_source === 'manual') {
 			items.push(['fa-rotate-left', 'Reset type to automatic', function () { setType([l], ''); }]);
 		}
 		items.push(['fa-filter', 'Show only ' + l.vendor, function () { state.vendor = l.vendor; state.chart = 'vendor'; render(); }]);

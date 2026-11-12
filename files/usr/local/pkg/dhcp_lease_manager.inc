@@ -19,137 +19,43 @@
  */
 
 /*
- * Backend-agnostic lease collection.
+ * Leases come from system_get_dhcpleases(), which reads whichever DHCPv4
+ * server is configured (ISC dhcpd or Kea), so this package does not depend
+ * on the backend. Each lease is enriched with:
+ *   vendor / vendor_kind  manufacturer from the MAC (oui|virtual|private|unknown)
+ *   type / type_source    device type (rule|manual|unknown)
+ *   age                   seconds since the lease started
+ *   is_static, staticmap_index, if, if_descr
  *
- * Every lease, whatever its source, is normalized to:
- *   ip, mac, cid, hostname, descr, if, if_descr,
- *   starts (epoch|null), ends (epoch|null), age (seconds|null),
- *   state (active|expired|static|reserved|declined|free|backup|unknown),
- *   online (bool|null), is_static (bool),
- *   vendor (string), vendor_kind (oui|private|unknown), source
- *
- * Lease sources, in order of preference:
- *   1. system_get_dhcpleases()  - pfSense's own abstraction (2.7+), which
- *                                 already handles ISC dhcpd and Kea.
- *   2. Direct parse of the active backend's lease database:
- *        ISC dhcpd : /var/dhcpd/var/db/dhcpd.leases
- *        Kea       : /var/db/kea/dhcp4.leases (memfile CSV, incl. LFC files)
- *   Any future backend only needs a new dlm_parse_*() function that returns
- *   the same normalized shape.
+ * Everything above the "pfSense integration" section is pure PHP so it can be
+ * unit tested without a firewall (see tests/ in the development repository).
  */
 
-define('DLM_ISC_LEASES', '/var/dhcpd/var/db/dhcpd.leases');
-/* pfSense keeps Kea's memfile in /var/db/kea; /var/lib/kea is Kea's upstream default. */
-define('DLM_KEA_LEASE_DIRS', ['/var/db/kea', '/var/lib/kea']);
-define('DLM_OUI_DB_CANDIDATES', [
-	'/usr/local/share/nmap/nmap-mac-prefixes',
-]);
+define('DLM_CONFIG_PATH', 'installedpackages/dhcpleasemanager');
 
-function dhcp_lease_manager_install() {
-	/* Nothing to set up; page is read-only and config edits go through core pages. */
-}
-
-function dhcp_lease_manager_deinstall() {
-}
-
-/* ---------------------------------------------------------------- helpers */
-
-function dlm_config_get($path, $default = null) {
-	if (function_exists('config_get_path')) {
-		return config_get_path($path, $default);
-	}
-	global $config;
-	$node = $config;
-	foreach (explode('/', $path) as $key) {
-		if (!is_array($node) || !array_key_exists($key, $node)) {
-			return $default;
-		}
-		$node = $node[$key];
-	}
-	return $node;
-}
-
-/* Which DHCPv4 server is in use: 'kea', 'isc', or 'unknown'. */
-function dlm_detect_backend() {
-	if (function_exists('dhcp_is_backend')) {
-		if (dhcp_is_backend('kea')) {
-			return 'kea';
-		}
-		if (dhcp_is_backend('isc')) {
-			return 'isc';
-		}
-	}
-	$cfg = dlm_config_get('dhcpbackend');
-	if ($cfg === 'kea' || $cfg === 'isc') {
-		return $cfg;
-	}
-	/* Older releases without the setting are ISC-only. */
-	if (file_exists(DLM_ISC_LEASES)) {
-		return 'isc';
-	}
-	if (dlm_kea_lease_dir() !== null) {
-		return 'kea';
-	}
-	return 'unknown';
-}
+/* ------------------------------------------------------------- helpers */
 
 function dlm_normalize_mac($mac) {
 	$hex = strtolower(preg_replace('/[^0-9a-fA-F]/', '', (string)$mac));
-	if (strlen($hex) < 12) {
+	if (strlen($hex) !== 12) {
 		return strtolower(trim((string)$mac));
 	}
-	return implode(':', str_split(substr($hex, 0, 12), 2));
+	return implode(':', str_split($hex, 2));
 }
 
-/* Accepts epoch ints, "YYYY/MM/DD HH:MM:SS" (UTC, ISC style) or other strtotime-able text. */
+/* Lease times from core are "YYYY/MM/DD HH:MM:SS" in UTC; empty for static entries. */
 function dlm_to_epoch($value) {
 	if ($value === null || $value === '' || $value === 'n/a' || $value === 'never') {
 		return null;
 	}
-	if (is_int($value) || (is_string($value) && ctype_digit($value))) {
+	if (is_int($value) || ctype_digit((string)$value)) {
 		return (int)$value;
 	}
-	$value = preg_replace('/^\d\s+/', '', trim((string)$value)); /* strip ISC weekday digit */
-	$ts = strtotime($value . ' UTC');
-	if ($ts === false) {
-		$ts = strtotime($value);
-	}
+	$ts = strtotime(trim((string)$value) . ' UTC');
 	return ($ts === false) ? null : $ts;
 }
 
 /* -------------------------------------------------------- manufacturer */
-
-function dlm_load_oui_table() {
-	static $table = null;
-	if ($table !== null) {
-		return $table;
-	}
-	/* pfSense core helper (util.inc) reads the nmap prefix list. */
-	if (function_exists('load_mac_manufacturer_table')) {
-		$t = load_mac_manufacturer_table();
-		if (is_array($t) && count($t) > 0) {
-			$table = $t;
-			return $table;
-		}
-	}
-	$table = array();
-	foreach (DLM_OUI_DB_CANDIDATES as $file) {
-		if (!is_readable($file)) {
-			continue;
-		}
-		foreach (file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
-			if ($line[0] === '#') {
-				continue;
-			}
-			$parts = preg_split('/\s+/', $line, 2);
-			if (count($parts) === 2) {
-				$table[strtoupper($parts[0])] = $parts[1];
-			}
-		}
-		break;
-	}
-	return $table;
-}
 
 /*
  * MAC prefixes that hypervisors and container runtimes assign to guests.
@@ -178,7 +84,7 @@ define('DLM_VIRTUAL_PREFIXES', [
 function dlm_vendor_for_mac($mac, $table) {
 	$hex = strtoupper(str_replace(':', '', $mac));
 	if (strlen($hex) < 6) {
-		return array('Unknown', 'unknown');
+		return array(gettext('Unknown'), 'unknown');
 	}
 	foreach (DLM_VIRTUAL_PREFIXES as $prefix => $name) {
 		if (strncmp($hex, $prefix, strlen($prefix)) === 0) {
@@ -190,12 +96,12 @@ function dlm_vendor_for_mac($mac, $table) {
 	}
 	/* Locally administered bit set: phones/laptops with MAC randomization. */
 	if (hexdec(substr($hex, 0, 2)) & 0x02) {
-		return array('Private (randomized MAC)', 'private');
+		return array(gettext('Private (randomized MAC)'), 'private');
 	}
-	return array('Unknown', 'unknown');
+	return array(gettext('Unknown'), 'unknown');
 }
 
-/* ------------------------------------------------------- device types */
+/* -------------------------------------------------------- device types */
 
 /* type id => array(label, Font Awesome 6 icon) */
 define('DLM_TYPES', [
@@ -228,9 +134,10 @@ define('DLM_TYPES', [
 
 /*
  * Ordered classification rules; the first rule whose conditions ALL match wins.
- * Conditions are case-insensitive regexes on 'hostname', 'vendor' or 'descr'.
- * Hostname rules come before vendor-only rules because a name chosen by the
- * owner ("kitchen-tv") says more than the radio module's manufacturer.
+ * Conditions are case-insensitive regexes on lease fields ('hostname',
+ * 'vendor', 'vendor_kind', 'descr'). Hostname rules come before vendor-only
+ * rules because a name chosen by the owner ("kitchen-tv") says more than the
+ * manufacturer of the device's network chip.
  */
 define('DLM_TYPE_RULES', [
 	/* --- hypervisor / container MACs: definitive, so they come first --- */
@@ -243,7 +150,7 @@ define('DLM_TYPE_RULES', [
 	['doorbell',     ['hostname' => '/doorbell|^ring-/']],
 	['camera',       ['hostname' => '/(^|[^a-z])(cam|camera|ipcam|nvr)([^a-z]|$)|webcam/']],
 	['streaming',    ['hostname' => '/apple-?tv|roku|fire-?tv|firestick|chromecast|nvidia-?shield|google-?tv|onn-?4k/']],
-	['game',         ['hostname' => '/xbox|playstation|ps[45]|nintendo|switch-?oled|steamdeck|steam-?deck/']],
+	['game',         ['hostname' => '/xbox|playstation|ps[45]|nintendo|switch-?oled|steam-?deck/']],
 	['tablet',       ['hostname' => '/ipad|tablet|kindle|galaxy-?tab|fire-?hd/']],
 	['phone',        ['hostname' => '/iphone|android|galaxy|pixel-?\d|(^|-)s2\d(-|$)|phone/']],
 	['watch',        ['hostname' => '/watch/']],
@@ -272,7 +179,7 @@ define('DLM_TYPE_RULES', [
 	['light',        ['vendor' => '/philips lighting|signify|lifx|nanoleaf|govee/']],
 	['thermostat',   ['vendor' => '/ecobee|nest labs/']],
 	['energy',       ['vendor' => '/enphase/']],
-	['tv',           ['vendor' => '/hisense|vizio|tcl |^tcl|lg electronics|sony visual/']],
+	['tv',           ['vendor' => '/hisense|vizio|^tcl|lg electronics|sony visual/']],
 	['streaming',    ['vendor' => '/roku/']],
 	['audio',        ['vendor' => '/sonos|presonus|bose|denon|yamaha/']],
 	['sbc',          ['vendor' => '/raspberry pi/']],
@@ -305,9 +212,74 @@ function dlm_classify($lease) {
 	return array('unknown', 'unknown');
 }
 
-/* Per-MAC manual type overrides, stored in config.xml as base64 JSON. */
+/* Core reports translated state strings; map them back to stable ids. */
+function dlm_canonical_state($raw, $is_static = false) {
+	if ($is_static) {
+		return 'static';
+	}
+	$raw = strtolower(trim((string)$raw));
+	foreach (array('active', 'expired', 'static', 'reserved', 'free', 'backup', 'declined', 'released', 'abandoned') as $s) {
+		if ($raw === $s || $raw === strtolower(gettext($s))) {
+			return ($s === 'abandoned') ? 'declined' : (($s === 'released') ? 'expired' : $s);
+		}
+	}
+	return ($raw === '') ? 'unknown' : $raw;
+}
+
+/* Core reports "active/online" or "idle/offline" (possibly translated). */
+function dlm_is_online($raw) {
+	$raw = strtolower(trim((string)$raw));
+	return (bool)preg_match('/(^|\W)(online|' . preg_quote(strtolower(gettext('online')), '/') . ')$/u', $raw);
+}
+
+/* ------------------------------------------------ pfSense integration */
+
+/* Map of mac => array(if, index, ip, descr) for every configured static mapping. */
+function dlm_static_maps() {
+	$out = array();
+	foreach (config_get_path('dhcpd', []) as $if => $ifcfg) {
+		if (!is_array($ifcfg)) {
+			continue;
+		}
+		foreach (array_get_path($ifcfg, 'staticmap', []) as $idx => $sm) {
+			if (empty($sm['mac'])) {
+				continue;
+			}
+			$out[dlm_normalize_mac($sm['mac'])] = array(
+				'if' => $if,
+				'index' => $idx,
+				'ip' => $sm['ipaddr'] ?? '',
+				'descr' => $sm['descr'] ?? '',
+			);
+		}
+	}
+	return $out;
+}
+
+/* Interface (e.g. "lan", "opt1") whose subnet contains $ip; dynamic leases from core carry none. */
+function dlm_interface_for_ip($ip) {
+	static $nets = null;
+	if ($nets === null) {
+		$nets = array();
+		foreach (array_keys(config_get_path('dhcpd', [])) as $if) {
+			$ifip = get_interface_ip($if);
+			$bits = get_interface_subnet($if);
+			if (is_ipaddrv4($ifip) && is_numeric($bits)) {
+				$nets[$if] = gen_subnet($ifip, $bits) . "/{$bits}";
+			}
+		}
+	}
+	foreach ($nets as $if => $cidr) {
+		if (ip_in_subnet($ip, $cidr)) {
+			return $if;
+		}
+	}
+	return '';
+}
+
+/* Per-MAC manual type overrides, stored in config.xml as base64-encoded JSON. */
 function dlm_type_overrides() {
-	$raw = dlm_config_get('installedpackages/dhcpleasemanager/typemap', '');
+	$raw = config_get_path(DLM_CONFIG_PATH . '/typemap', '');
 	$map = $raw ? json_decode(base64_decode($raw), true) : null;
 	return is_array($map) ? $map : array();
 }
@@ -315,14 +287,14 @@ function dlm_type_overrides() {
 /* Set ($type) or reset ($type === '') the type of one or more MACs. Returns an error string or null. */
 function dlm_set_type_override($macs, $type) {
 	if ($type !== '' && !array_key_exists($type, DLM_TYPES)) {
-		return 'Invalid device type.';
+		return gettext('Invalid device type.');
 	}
 	$map = dlm_type_overrides();
 	$n = 0;
 	foreach ((array)$macs as $mac) {
 		$mac = dlm_normalize_mac($mac);
-		if (!preg_match('/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/', $mac)) {
-			return 'Invalid MAC address.';
+		if (!is_macaddr($mac)) {
+			return gettext('Invalid MAC address.');
 		}
 		if ($type === '') {
 			unset($map[$mac]);
@@ -332,50 +304,24 @@ function dlm_set_type_override($macs, $type) {
 		$n++;
 	}
 	if ($n === 0) {
-		return 'No devices selected.';
+		return gettext('No devices selected.');
 	}
 	ksort($map);
-	config_set_path('installedpackages/dhcpleasemanager/typemap', base64_encode(json_encode($map)));
-	write_config(sprintf('DHCP Lease Manager: device type %s for %d device(s)',
-		$type === '' ? 'reset' : "set to {$type}", $n));
+	config_set_path(DLM_CONFIG_PATH . '/typemap', base64_encode(json_encode($map)));
+	if (!write_config(sprintf(gettext('DHCP Lease Manager: device type %1$s for %2$d device(s)'),
+	    ($type === '') ? 'reset' : "set to {$type}", $n))) {
+		return gettext('The configuration could not be saved.');
+	}
 	return null;
 }
 
-/* ------------------------------------------------------- static mappings */
-
-/* Map of mac => array(if, ip, hostname, descr) for every configured static mapping. */
-function dlm_static_maps() {
-	$out = array();
-	$dhcpd = dlm_config_get('dhcpd', array());
-	if (!is_array($dhcpd)) {
-		return $out;
-	}
-	foreach ($dhcpd as $if => $ifcfg) {
-		if (!is_array($ifcfg) || empty($ifcfg['staticmap']) || !is_array($ifcfg['staticmap'])) {
-			continue;
-		}
-		foreach ($ifcfg['staticmap'] as $idx => $sm) {
-			if (empty($sm['mac'])) {
-				continue;
-			}
-			$out[dlm_normalize_mac($sm['mac'])] = array(
-				'if' => $if,
-				'index' => $idx,
-				'ip' => $sm['ipaddr'] ?? '',
-				'hostname' => $sm['hostname'] ?? '',
-				'descr' => $sm['descr'] ?? '',
-			);
-		}
-	}
-	return $out;
-}
-
 /*
- * Remove static mappings. $items is a list of array(if, id, mac); each entry
- * is only removed if the mapping at that index still has that MAC, so a stale
- * page can never delete the wrong mapping. Mirrors services_dhcp.php "del":
- * static ARP cleanup, Kea lease removal, and marking DHCP (and DNS host
- * overrides) dirty so the user applies the change with pfSense's Apply button.
+ * Remove static mappings. $items is a list of array(if, id, mac); an entry is
+ * only removed if the mapping at that index still has that MAC, so a stale
+ * page can never delete the wrong mapping. Mirrors the "del" action of
+ * services_dhcp.php: once the configuration is saved, the static ARP entry and
+ * the Kea lease are cleared and the DHCP (and DNS host) subsystems are marked
+ * dirty, so the change takes effect when the user clicks Apply Changes.
  * Returns array(removed_count, errors[]).
  */
 function dlm_delete_static_maps($items) {
@@ -385,20 +331,16 @@ function dlm_delete_static_maps($items) {
 		$if = (string)($it['if'] ?? '');
 		$id = $it['id'] ?? null;
 		$mac = dlm_normalize_mac($it['mac'] ?? '');
-		if (!preg_match('/^[a-z0-9_]+$/i', $if) || !is_numeric($id)) {
-			$errors[] = "Invalid request for {$mac}.";
+		if (!preg_match('/^[a-z0-9_]+$/i', $if) || !is_numericint((string)$id) || !is_macaddr($mac)) {
+			$errors[] = gettext('Invalid request.');
 			continue;
 		}
-		$id = (int)$id;
-		$map = dlm_config_get("dhcpd/{$if}/staticmap/{$id}");
-		if (!is_array($map) || dlm_normalize_mac($map['mac'] ?? '') !== $mac) {
-			$errors[] = "Static mapping for {$mac} changed since the page loaded; reload and try again.";
+		$map = config_get_path("dhcpd/{$if}/staticmap/{$id}");
+		if (!is_array($map) || (dlm_normalize_mac($map['mac'] ?? '') !== $mac)) {
+			$errors[] = sprintf(gettext('The static mapping for %s changed since the page was loaded. Reload and try again.'), $mac);
 			continue;
 		}
-		if (isset($map['arp_table_static_entry']) && is_ipaddrv4($map['ipaddr'] ?? '')) {
-			mwexec('/usr/sbin/arp -d ' . escapeshellarg($map['ipaddr']));
-		}
-		/* Unset leaves the other indices untouched, so the batch order does not matter. */
+		/* Unsetting leaves the other indices untouched, so the batch order does not matter. */
 		config_del_path("dhcpd/{$if}/staticmap/{$id}");
 		$removed[] = array('if' => $if, 'map' => $map);
 	}
@@ -406,332 +348,98 @@ function dlm_delete_static_maps($items) {
 		return array(0, $errors);
 	}
 
-	write_config(sprintf('DHCP Lease Manager: removed %d static mapping(s)', count($removed)));
+	if (!write_config(sprintf(gettext('DHCP Lease Manager: removed %d static mapping(s)'), count($removed)))) {
+		return array(0, array(gettext('The configuration could not be saved.')));
+	}
 
+	$kea = dhcp_is_backend('kea');
+	if ($kea) {
+		require_once('system.inc');
+	}
 	foreach ($removed as $r) {
 		$if = $r['if'];
 		$map = $r['map'];
-		if (function_exists('config_path_enabled') ? config_path_enabled("dhcpd/{$if}") : true) {
+		if (isset($map['arp_table_static_entry']) && is_ipaddrv4($map['ipaddr'] ?? '')) {
+			mwexec('/usr/sbin/arp -d ' . escapeshellarg($map['ipaddr']));
+		}
+		if (config_path_enabled("dhcpd/{$if}")) {
 			mark_subsystem_dirty('dhcpd');
-			if (dlm_config_get('dnsmasq/enable') !== null && dlm_config_get('dnsmasq/regdhcpstatic')) {
+			if (config_path_enabled('dnsmasq') && config_get_path('dnsmasq/regdhcpstatic', false)) {
 				mark_subsystem_dirty('hosts');
 			}
 		}
-		if (function_exists('dhcp_is_backend') && dhcp_is_backend('kea')) {
-			require_once('system.inc');
-			if (!function_exists('system_del_kea4lease')) {
-				continue;
-			}
+		if ($kea) {
 			if (is_ipaddrv4($map['ipaddr'] ?? '')) {
 				system_del_kea4lease($map['ipaddr']);
-			} elseif (!empty($map['mac']) && function_exists('get_keasubnetid_from_interface')) {
+			} elseif (!empty($map['mac'])) {
 				system_del_kea4lease($map['mac'], get_keasubnetid_from_interface($if));
+			} elseif (!empty($map['cid'])) {
+				system_del_kea4lease($map['cid'], get_keasubnetid_from_interface($if));
 			}
 		}
 	}
 	return array(count($removed), $errors);
 }
 
-/* Interface (pfSense name, e.g. "lan", "opt1") whose subnet contains $ip. */
-function dlm_interface_for_ip($ip) {
-	static $nets = null;
-	if ($nets === null) {
-		$nets = array();
-		$dhcpd = dlm_config_get('dhcpd', array());
-		if (is_array($dhcpd) && function_exists('get_interface_ip')) {
-			foreach (array_keys($dhcpd) as $if) {
-				$ifip = get_interface_ip($if);
-				$bits = get_interface_subnet($if);
-				if (is_ipaddrv4($ifip) && is_numeric($bits)) {
-					$nets[$if] = gen_subnet($ifip, $bits) . "/{$bits}";
-				}
-			}
-		}
-	}
-	foreach ($nets as $if => $cidr) {
-		if (function_exists('ip_in_subnet') && ip_in_subnet($ip, $cidr)) {
-			return $if;
-		}
-	}
-	return '';
-}
-
-function dlm_arp_online_ips() {
-	$online = array();
-	exec('/usr/sbin/arp -an 2>/dev/null', $lines);
-	foreach ((array)$lines as $line) {
-		if (preg_match('/\((\d+\.\d+\.\d+\.\d+)\) at ([0-9a-f:]+)/i', $line, $m)) {
-			$online[$m[1]] = true;
-		}
-	}
-	return $online;
-}
-
-/* ------------------------------------------------------- lease sources */
-
-/* Source 1: pfSense core abstraction (covers ISC and Kea on 2.7+). */
-function dlm_leases_from_core() {
-	if (!function_exists('system_get_dhcpleases')) {
-		return null;
-	}
+/* All DHCPv4 leases and static mappings, enriched for display. */
+function dlm_get_leases() {
 	$res = system_get_dhcpleases();
-	if (!is_array($res)) {
-		return null;
-	}
-	$list = isset($res['lease']) ? $res['lease'] : $res;
+	$oui = load_mac_manufacturer_table();
+	$statics = dlm_static_maps();
+	$overrides = dlm_type_overrides();
+	$now = time();
 	$out = array();
-	foreach ((array)$list as $l) {
+
+	foreach (array_get_path($res, 'lease', []) as $l) {
 		if (!is_array($l) || empty($l['ip'])) {
 			continue;
 		}
-		$act = strtolower((string)($l['act'] ?? $l['state'] ?? ''));
-		$online = $l['online'] ?? null;
-		if (is_string($online)) {
-			/* core reports e.g. "active/online" or "idle/offline" */
-			$online = (bool)preg_match('/(^|\W)(online|' . preg_quote(gettext('online'), '/') . ')$/iu', trim($online));
-		}
-		$out[] = array(
+		$mac = dlm_normalize_mac($l['mac'] ?? '');
+		$core_static = (($l['type'] ?? '') === 'static');
+		$sm = $statics[$mac] ?? null;
+		$lease = array(
 			'ip' => $l['ip'],
-			'mac' => $l['mac'] ?? '',
+			'mac' => $mac,
 			'cid' => $l['cid'] ?? '',
-			'hostname' => $l['hostname'] ?? '',
-			'descr' => $l['descr'] ?? '',
-			'if' => $l['if'] ?? '',
-			'starts' => dlm_to_epoch($l['start'] ?? $l['starts'] ?? null),
-			'ends' => dlm_to_epoch($l['end'] ?? $l['ends'] ?? null),
-			'state' => dlm_canonical_state($act, ($l['type'] ?? '') === 'static'),
-			'online' => $online,
+			'hostname' => rtrim((string)($l['hostname'] ?? ''), '.'),
+			'descr' => (string)($l['descr'] ?? ($sm['descr'] ?? '')),
+			'if' => (string)($l['if'] ?? ''),
+			'starts' => dlm_to_epoch($l['starts'] ?? null),
+			'ends' => dlm_to_epoch($l['ends'] ?? null),
+			'state' => dlm_canonical_state($l['act'] ?? '', $core_static),
+			'online' => dlm_is_online($l['online'] ?? ''),
+			'is_static' => $core_static || ($sm !== null),
 			'staticmap_index' => $l['staticmap_array_index'] ?? null,
-			'source' => 'core',
 		);
-	}
-	return $out;
-}
+		if ($lease['if'] === '') {
+			$lease['if'] = $sm['if'] ?? dlm_interface_for_ip($lease['ip']);
+		}
+		/* A dynamic lease held by a device that also has a static mapping. */
+		if ($lease['staticmap_index'] === null && $sm !== null && $sm['if'] === $lease['if']) {
+			$lease['staticmap_index'] = $sm['index'];
+		}
 
-function dlm_canonical_state($raw, $is_static = false) {
-	if ($is_static) {
-		return 'static';
-	}
-	$map = array(
-		'active' => 'active', 'expired' => 'expired', 'static' => 'static',
-		'reserved' => 'reserved', 'free' => 'free', 'backup' => 'backup',
-		'abandoned' => 'declined', 'declined' => 'declined', 'released' => 'expired',
-	);
-	foreach ($map as $needle => $state) {
-		if ($raw === $needle || ($raw !== '' && $raw === strtolower(gettext($needle)))) {
-			return $state;
-		}
-	}
-	return $raw === '' ? 'unknown' : $raw;
-}
-
-/* Source 2a: ISC dhcpd lease file. Later blocks for the same IP win. */
-function dlm_parse_isc_leases($file = DLM_ISC_LEASES) {
-	if (!is_readable($file)) {
-		return array();
-	}
-	$text = file_get_contents($file);
-	$by_ip = array();
-	if (!preg_match_all('/^lease\s+(\S+)\s*\{(.*?)^\}/ms', $text, $blocks, PREG_SET_ORDER)) {
-		return array();
-	}
-	foreach ($blocks as $b) {
-		$body = $b[2];
-		$get = function ($re) use ($body) {
-			return preg_match($re, $body, $m) ? $m[1] : null;
-		};
-		$by_ip[$b[1]] = array(
-			'ip' => $b[1],
-			'mac' => $get('/hardware ethernet ([0-9a-f:]+);/i') ?? '',
-			'cid' => $get('/uid "((?:[^"\\\\]|\\\\.)*)";/') ?? '',
-			'hostname' => $get('/client-hostname "([^"]*)";/') ?? '',
-			'descr' => '',
-			'if' => '',
-			'starts' => dlm_to_epoch($get('/starts ([^;]+);/')),
-			'ends' => dlm_to_epoch($get('/ends ([^;]+);/')),
-			'state' => dlm_canonical_state(strtolower($get('/^\s*binding state (\w+);/m') ?? '')),
-			'online' => null,
-			'source' => 'isc',
-		);
-	}
-	return array_values($by_ip);
-}
-
-/*
- * Source 2b: Kea memfile CSV.
- * Columns: address,hwaddr,client_id,valid_lifetime,expire,subnet_id,
- *          fqdn_fwd,fqdn_rev,hostname,state,user_context[,pool_id]
- * Kea's lease file cleanup (LFC) rotates into .completed/.2/.1, so read those
- * oldest-first and let newer rows override.
- */
-function dlm_kea_lease_dir() {
-	foreach (DLM_KEA_LEASE_DIRS as $d) {
-		if (file_exists("{$d}/dhcp4.leases")) {
-			return $d;
-		}
-	}
-	return null;
-}
-
-function dlm_parse_kea_leases($dir = null) {
-	$dir = $dir ?? dlm_kea_lease_dir();
-	if ($dir === null) {
-		return array();
-	}
-	$files = array();
-	foreach (array('dhcp4.leases.completed', 'dhcp4.leases.2', 'dhcp4.leases.1', 'dhcp4.leases') as $f) {
-		if (is_readable("{$dir}/{$f}")) {
-			$files[] = "{$dir}/{$f}";
-		}
-	}
-	$by_ip = array();
-	foreach ($files as $file) {
-		$fh = fopen($file, 'r');
-		if (!$fh) {
-			continue;
-		}
-		$header = null;
-		while (($row = fgetcsv($fh, 0, ',', '"', '\\')) !== false) {
-			if ($header === null) {
-				$header = $row;
-				continue;
-			}
-			if (count($row) < count($header)) {
-				$row = array_pad($row, count($header), '');
-			}
-			$r = array_combine($header, array_slice($row, 0, count($header)));
-			if (empty($r['address'])) {
-				continue;
-			}
-			$expire = (int)$r['expire'];
-			$valid = (int)$r['valid_lifetime'];
-			$kea_state = (int)($r['state'] ?? 0);
-			/* valid_lifetime 0 = lease deleted/released */
-			if ($valid === 0 && $expire === 0) {
-				unset($by_ip[$r['address']]);
-				continue;
-			}
-			$state = ($kea_state === 1) ? 'declined' : (($kea_state === 2 || $expire < time()) ? 'expired' : 'active');
-			$by_ip[$r['address']] = array(
-				'ip' => $r['address'],
-				'mac' => $r['hwaddr'] ?? '',
-				'cid' => $r['client_id'] ?? '',
-				'hostname' => rtrim(stripcslashes($r['hostname'] ?? ''), '.'),
-				'descr' => '',
-				'if' => '',
-				'starts' => $expire ? ($expire - $valid) : null,
-				'ends' => $expire ?: null,
-				'state' => $state,
-				'online' => null,
-				'source' => 'kea',
-			);
-		}
-		fclose($fh);
-	}
-	return array_values($by_ip);
-}
-
-/* -------------------------------------------------------------- facade */
-
-function dlm_get_leases($opts = array()) {
-	$backend = dlm_detect_backend();
-	$leases = empty($opts['force_parse']) ? dlm_leases_from_core() : null;
-
-	if ($leases === null) {
-		switch ($backend) {
-			case 'kea':
-				$leases = dlm_parse_kea_leases();
-				break;
-			case 'isc':
-				$leases = dlm_parse_isc_leases();
-				break;
-			default:
-				$leases = array_merge(dlm_parse_isc_leases(), dlm_parse_kea_leases());
-		}
-	}
-
-	$oui = dlm_load_oui_table();
-	$statics = dlm_static_maps();
-	$arp = null;
-	$now = time();
-	$out = array();
-	$seen_static = array();
-
-	foreach ($leases as $l) {
-		$l['mac'] = dlm_normalize_mac($l['mac']);
-		$l['hostname'] = rtrim((string)$l['hostname'], '.');
-		$l['staticmap_index'] = $l['staticmap_index'] ?? null;
-		if ($l['if'] === '') {
-			$l['if'] = dlm_interface_for_ip($l['ip']);
-		}
-		if ($l['online'] === null) {
-			if ($arp === null) {
-				$arp = dlm_arp_online_ips();
-			}
-			$l['online'] = isset($arp[$l['ip']]);
-		}
-		$sm = $statics[$l['mac']] ?? null;
-		$l['is_static'] = ($sm !== null) || $l['state'] === 'static';
-		if ($sm !== null) {
-			$seen_static[$l['mac']] = true;
-			if ($l['descr'] === '') {
-				$l['descr'] = $sm['descr'];
-			}
-			if ($l['if'] === '') {
-				$l['if'] = $sm['if'];
-			}
-			if ($l['staticmap_index'] === null && $l['if'] === $sm['if']) {
-				$l['staticmap_index'] = $sm['index'];
-			}
-		}
-		$out[] = $l;
-	}
-
-	/* Static mappings without a current lease (parsed sources only list leases). */
-	foreach ($statics as $mac => $sm) {
-		if (isset($seen_static[$mac]) || $sm['ip'] === '') {
-			continue;
-		}
-		$dupe = false;
-		foreach ($out as $l) {
-			if ($l['ip'] === $sm['ip'] && $l['is_static']) {
-				$dupe = true;
-				break;
-			}
-		}
-		if ($dupe) {
-			continue;
-		}
-		if ($arp === null) {
-			$arp = dlm_arp_online_ips();
-		}
-		$out[] = array(
-			'ip' => $sm['ip'], 'mac' => $mac, 'cid' => '',
-			'hostname' => $sm['hostname'], 'descr' => $sm['descr'], 'if' => $sm['if'],
-			'starts' => null, 'ends' => null, 'state' => 'static',
-			'online' => isset($arp[$sm['ip']]), 'is_static' => true,
-			'staticmap_index' => $sm['index'], 'source' => 'config',
-		);
-	}
-
-	$overrides = dlm_type_overrides();
-	foreach ($out as &$l) {
-		list($l['vendor'], $l['vendor_kind']) = dlm_vendor_for_mac($l['mac'], $oui);
-		if (isset($overrides[$l['mac']]) && isset(DLM_TYPES[$overrides[$l['mac']]])) {
-			$l['type'] = $overrides[$l['mac']];
-			$l['type_source'] = 'manual';
+		list($lease['vendor'], $lease['vendor_kind']) = dlm_vendor_for_mac($mac, $oui);
+		if (isset($overrides[$mac], DLM_TYPES[$overrides[$mac]])) {
+			$lease['type'] = $overrides[$mac];
+			$lease['type_source'] = 'manual';
 		} else {
-			list($l['type'], $l['type_source']) = dlm_classify($l);
+			list($lease['type'], $lease['type_source']) = dlm_classify($lease);
 		}
-		$l['age'] = ($l['starts'] !== null) ? max(0, $now - $l['starts']) : null;
-		$l['if_descr'] = ($l['if'] !== '' && function_exists('convert_friendly_interface_to_friendly_descr'))
-			? convert_friendly_interface_to_friendly_descr($l['if']) : strtoupper($l['if']);
+		$lease['age'] = ($lease['starts'] !== null) ? max(0, $now - $lease['starts']) : null;
+		$lease['if_descr'] = ($lease['if'] !== '') ?
+		    convert_friendly_interface_to_friendly_descr($lease['if']) : '';
+		$out[] = $lease;
 	}
-	unset($l);
 
 	$types = array();
 	foreach (DLM_TYPES as $id => $t) {
-		$types[$id] = array('label' => $t[0], 'icon' => $t[1]);
+		$types[$id] = array('label' => gettext($t[0]), 'icon' => $t[1]);
 	}
-	return array('backend' => $backend, 'generated' => $now, 'types' => $types, 'leases' => $out);
+	return array(
+		'backend' => dhcp_is_backend('kea') ? 'kea' : 'isc',
+		'generated' => $now,
+		'types' => $types,
+		'leases' => $out,
+	);
 }
